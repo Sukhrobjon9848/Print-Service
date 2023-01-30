@@ -1,23 +1,20 @@
-import { Body, Controller, Get, Post } from "@nestjs/common";
+import { Body, Controller, Get, Post, Req, Res, UseGuards } from "@nestjs/common";
+import { Request, Response } from "express";
+import { CreateUserDto } from "src/user/dto/create-user.dto";
+import { AccessTokenGuard } from "src/user/guards/accessToken.guard";
+import { RefreshTokenGuard } from "src/user/guards/refreshToken.guard";
 import { AuthService } from "./auth.service";
-import { loginDto } from "./dto/login-dto";
-import { RegisterDto } from "./dto/register-dto";
+import { loginDto } from "./dto/login.dto";
 
 @Controller('auth')
 export class AuthController {
-
     constructor(private readonly authService: AuthService) { }
 
     @Post('register')
-    async register(@Body() registerData: RegisterDto) {
-        try {
-            const user = await this.authService.registerUser(registerData)
-            console.log(user);
+    async register(@Body() userData: CreateUserDto) {
+        const tokens = await this.authService.register(userData)
+        return tokens
 
-            return user
-        } catch (error) {
-            return error.message
-        }
     }
 
     @Post('login')
@@ -27,10 +24,19 @@ export class AuthController {
         return user
 
     }
-    @Get('user')
-    getUser() {
-        return this.authService.getUser()
-    }
 
-}
-console.log(process.env.DB);
+    @UseGuards(AccessTokenGuard)
+    @Get('logout')
+    logout(@Req() req: Request) {
+        this.authService.logout(req.user['sub'])
+    }
+    @UseGuards(RefreshTokenGuard)
+    @Get('refresh')
+    refreshToken(@Req() req: Request) {
+        const userId = req.user['sub']
+        const refreshToken = req.user['refreshToken']
+        console.log(refreshToken);
+        
+        return this.authService.refreshToken(userId, refreshToken)
+    }
+}   

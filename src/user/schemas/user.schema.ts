@@ -9,6 +9,8 @@ export class User {
     email: string
     @Prop({ required: true, type: String, length: [8, 87] })
     password: string
+    @Prop({ default: 'kk',defaultOptions:true})
+    refreshToken: string
 
 }
 

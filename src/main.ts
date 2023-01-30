@@ -7,9 +7,9 @@ async function bootstrap() {
   app.enableCors({
     origin: ['http://localhost:3001']
   })
-  console.log(process.env.DB);
-  
-  app.useGlobalPipes(new ValidationPipe())
+  app.useGlobalPipes(new ValidationPipe({
+    whitelist:true
+  }))
   await app.listen(3000);
 }
 bootstrap();

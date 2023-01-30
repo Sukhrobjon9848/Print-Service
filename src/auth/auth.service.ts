@@ -1,40 +1,85 @@
-import { HttpException, HttpStatus, Injectable } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, HttpException, HttpStatus, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { InjectModel } from "@nestjs/mongoose";
-import { Model } from "mongoose";
-import { Config } from "prettier";
-import { deCodedPass, hashpassword } from "src/utils/password-hash";
-import { loginDto } from "./dto/login-dto";
-import { RegisterDto } from "./dto/register-dto";
-import { User, UserDocument } from "./schemas/auth.schema";
+import { JwtService } from "@nestjs/jwt";
+import * as bcrypt from "bcrypt"
+import { Response } from "express";
+import { CreateUserDto } from "src/user/dto/create-user.dto";
+import { UserService } from "src/user/user.service";
+import { loginDto } from "./dto/login.dto";
 
 @Injectable()
 export class AuthService {
-    constructor(@InjectModel(User.name) private authModel: Model<UserDocument>, private readonly configService: ConfigService) { }
+    constructor(private userService: UserService, private jwtSevice: JwtService, private confige: ConfigService) { }
 
-    async registerUser(regsiterData: RegisterDto) {
-        const { userName, email, password } = regsiterData
-        const founfUser = await this.authModel.findOne({ email: email })
-        if (founfUser) {
+    async register(userData: CreateUserDto) {
+        const foundUser = await this.userService.findByEmail(userData.email)
+        if (foundUser) {
             throw new HttpException("Alread exsisted", HttpStatus.FOUND)
         }
-        const Password = await hashpassword(password)
-        return this.authModel.create({ userName, email, password: Password })
+        const Password = await this.hash(userData.password)
+        const user = await this.userService.create({ ...userData, password: Password })
+        let tokens = await this.getTokens(user.id, user.userName)
+        let refreshToken = await this.hash(tokens.refreshToken)
+        this.updateRefreshToken(user.id, refreshToken)
+        return tokens
     }
-
     async login(loginData: loginDto) {
-        let userData = await this.authModel.findOne({ email: loginData.email })
-        const decode = await deCodedPass(loginData.password, userData.password)
-        if (userData) {
-            if (decode) {
-                throw new HttpException("ok", HttpStatus.OK)
-            }
-            throw new HttpException("Password invalid", HttpStatus.BAD_REQUEST)
-        }
-        throw new HttpException("NotFound", HttpStatus.NOT_FOUND)
+        let userData = await this.userService.findByEmail(loginData.email)
+        if (!userData) throw new BadRequestException('User does not exist');
+        const Decode = await this.compire(loginData.password, userData.password)
+        if (!Decode) throw new BadRequestException('Password is incorrect');
+        let tokens = await this.getTokens(userData.id, userData.userName)
+        let refreshToken = await this.hash(tokens.refreshToken)
+        this.updateRefreshToken(userData.id, refreshToken)
+        return tokens
+    }
+
+
+    logout(id: string) {
+        return this.userService.update(id, { refreshToken: null })
+    }
+    updateRefreshToken(id: string, refreshToken: string) {
+        this.userService.update(id, { refreshToken })
+    }
+    async getTokens(id: string, userName: string) {
+        let refreshToken =
+            await this.jwtSevice.signAsync({
+                sub: id,
+                userName
+            }, {
+                secret: this.confige.get<string>('JWT_REFRESH_SECRET'),
+                expiresIn: '24h'
+            })
+        let accsessToken = await this.jwtSevice.signAsync({
+            sub: id,
+            userName
+        }, {
+            secret: this.confige.get<string>('JWT_ACCESS_SECRET'),
+            expiresIn: '2m'
+        })
+        return { accsessToken, refreshToken }
 
     }
-    getUser() {
-        return this.authModel.find()
+
+
+    async refreshToken(id: string, RefreshToken: string) {
+        const user = await this.userService.findOne(id) 
+        if (!user || !user.refreshToken) throw new ForbiddenException('Access Denied');
+        const refreshTokenPass = await this.compire(RefreshToken, user.refreshToken,)
+        if (!refreshTokenPass) throw new ForbiddenException('Access Denied');
+        let tokens = await this.getTokens(user.id, user.userName)
+        let refreshToken = await this.hash(tokens.refreshToken)
+        this.updateRefreshToken(user.id, refreshToken)
+        return tokens
+    }
+
+    hash(password: string) {
+        const SALT = bcrypt.genSaltSync()
+        const hashpass = bcrypt.hash(password, SALT)
+        return hashpass
+    }
+    async compire(password: string, hash: string) {
+        const cheackPass = await bcrypt.compare(password, hash)
+        return cheackPass
     }
 }
